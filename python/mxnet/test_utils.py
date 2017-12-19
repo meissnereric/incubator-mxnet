@@ -29,6 +29,7 @@ import os
 import errno
 import logging
 import bz2
+import zipfile
 from contextlib import contextmanager
 import numpy as np
 import numpy.testing as npt
@@ -1440,6 +1441,31 @@ def get_mnist():
     return {'train_data':train_img, 'train_label':train_lbl,
             'test_data':test_img, 'test_label':test_lbl}
 
+def get_zip_data(data_dir, url, data_origin_name):
+    """Download and extract zip data.
+
+    Parameters
+    ----------
+
+    data_dir : str
+        Absolute or relative path of the directory name to store zip files
+    url : str
+        URL to download data from
+    data_origin_name : str
+        Name of the downloaded zip file
+
+    Examples
+    --------
+    >>> get_zip_data("data_dir",
+                     "http://files.grouplens.org/datasets/movielens/ml-10m.zip",
+                     "ml-10m.zip")
+    """
+    data_origin_name = os.path.join(data_dir, data_origin_name)
+    if not os.path.exists(data_origin_name):
+        download(url, dirname=data_dir, overwrite=False)
+        zip_file = zipfile.ZipFile(data_origin_name)
+        zip_file.extractall(path=data_dir)
+
 def get_bz2_data(data_dir, data_name, url, data_origin_name):
     """Download and extract bz2 data.
 
@@ -1465,14 +1491,12 @@ def get_bz2_data(data_dir, data_name, url, data_origin_name):
     data_name = os.path.join(data_dir, data_name)
     data_origin_name = os.path.join(data_dir, data_origin_name)
     if not os.path.exists(data_name):
-        download(url, dirname=data_dir, overwrite=False)
+        download(url, fname=data_origin_name, dirname=data_dir, overwrite=False)
         bz_file = bz2.BZ2File(data_origin_name, 'rb')
         with open(data_name, 'wb') as fout:
-            try:
-                content = bz_file.read()
-                fout.write(content)
-            finally:
-                bz_file.close()
+            for line in bz_file:
+                fout.write(line)
+            bz_file.close()
         os.remove(data_origin_name)
 
 def set_env_var(key, val, default_val=""):
@@ -1538,3 +1562,34 @@ def discard_stderr():
     finally:
         os.dup2(old_stderr, stderr_fileno)
         bit_bucket.close()
+
+class DummyIter(mx.io.DataIter):
+    """A dummy iterator that always returns the same batch of data
+    (the first data batch of the real data iter). This is usually used for speed testing.
+
+    Parameters
+    ----------
+    real_iter: mx.io.DataIter
+        The real data iterator where the first batch of data comes from
+    """
+    def __init__(self, real_iter):
+        super(DummyIter, self).__init__()
+        self.real_iter = real_iter
+        self.provide_data = real_iter.provide_data
+        self.provide_label = real_iter.provide_label
+        self.batch_size = real_iter.batch_size
+        self.the_batch = next(real_iter)
+
+    def __iter__(self):
+        return self
+
+    def next(self):
+        """Get a data batch from iterator. The first data batch of real iter is always returned.
+        StopIteration will never be raised.
+
+        Returns
+        -------
+        DataBatch
+            The data of next batch.
+        """
+        return self.the_batch
